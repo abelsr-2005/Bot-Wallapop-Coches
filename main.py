@@ -16,8 +16,11 @@ EMAIL_PASSWORD = os.environ.get("EMAIL_PASS")
 EMAIL_RECEIVER = os.environ.get("EMAIL_RECEIVER")
 RAW_URLS = os.environ.get("WALLAPOP_URLS", "")
 
-# --- SEPARACIÓN DE URLS (SOLO BARRA VERTICAL | ) ---
-# Aquí está la clave: usamos | para separar las 9 búsquedas sin romper las comas internas
+# !!! CONFIGURACIÓN DE TIEMPO !!!
+# Puesto en 30 para probar. CÁMBIALO A 1 CUANDO FUNCIONE PARA QUE SEA DIARIO.
+DIAS_ATRAS = 30 
+
+# --- SEPARACIÓN DE URLS ---
 URLS_BUSQUEDA = [url.strip() for url in RAW_URLS.split("|") if url.strip()]
 
 def get_headers():
@@ -35,11 +38,8 @@ def get_headers():
 
 def get_wallapop_listings(search_url):
     print(f"🔎 Consultando zona...")
-    
     try:
-        # Pausa aleatoria para parecer humano
-        time.sleep(random.uniform(1, 3))
-        
+        time.sleep(random.uniform(1, 3)) # Pausa humana
         response = requests.get(search_url, headers=get_headers(), timeout=30)
         
         if response.status_code != 200:
@@ -52,16 +52,11 @@ def get_wallapop_listings(search_url):
         if script_data:
             try:
                 data = json.loads(script_data.string)
-                # Estrategia de búsqueda profunda en el JSON
                 props = data.get('props', {}).get('pageProps', {})
                 
-                # Intento 1: SearchObjects
-                if 'searchObjects' in props:
-                    return props['searchObjects']
-                
-                # Intento 2: Catalog Objects
-                if 'catalog' in props and 'objects' in props['catalog']:
-                    return props['catalog']['objects']
+                # Búsqueda en ubicaciones conocidas del JSON
+                if 'searchObjects' in props: return props['searchObjects']
+                if 'catalog' in props and 'objects' in props['catalog']: return props['catalog']['objects']
                 
                 return []
             except Exception:
@@ -75,31 +70,45 @@ def get_wallapop_listings(search_url):
 def send_email_report(cars_found):
     if not cars_found: return
 
-    subject = f"🚗 {len(cars_found)} Coches Nuevos (Audi/BMW/Mercedes)"
+    # Asunto más llamativo
+    subject = f"✅ PRUEBA EXITOSA: {len(cars_found)} Coches encontrados"
     
     html_content = f"""
     <html>
       <body style="font-family: Arial, sans-serif;">
-        <h2 style="color: #2c3e50;">Resumen Diario</h2>
-        <p>Se han encontrado <strong>{len(cars_found)}</strong> anuncios en las últimas 24 horas.</p>
-        <table style="width:100%; border-collapse: collapse;">
+        <h2 style="color: #2c3e50;">Reporte de Prueba (Últimos {DIAS_ATRAS} días)</h2>
+        <p>Si estás leyendo esto, el bot funciona y el envío de correos es correcto.</p>
+        <p>Se han encontrado <strong>{len(cars_found)}</strong> anuncios.</p>
+        
+        <table style="width:100%; border-collapse: collapse; margin-top: 15px;">
           <tr style="background-color: #ecf0f1;">
             <th style="padding: 10px; border: 1px solid #bdc3c7;">Coche</th>
             <th style="padding: 10px; border: 1px solid #bdc3c7;">Precio</th>
-            <th style="padding: 10px; border: 1px solid #bdc3c7;">Ver</th>
+            <th style="padding: 10px; border: 1px solid #bdc3c7;">Enlace</th>
           </tr>
     """
     
-    for car in cars_found:
+    # Limitamos a 20 coches para no saturar el correo de prueba
+    for car in cars_found[:20]:
         html_content += f"""
           <tr>
             <td style="padding: 10px; border: 1px solid #bdc3c7;">{car['title']}</td>
             <td style="padding: 10px; border: 1px solid #bdc3c7; font-weight:bold;">{car['price']}</td>
-            <td style="padding: 10px; border: 1px solid #bdc3c7;"><a href="{car['url']}">Enlace</a></td>
+            <td style="padding: 10px; border: 1px solid #bdc3c7; text-align: center;">
+                <a href="{car['url']}" style="background-color: #13c1ac; color: white; padding: 5px 10px; text-decoration: none; border-radius: 4px;">Ver</a>
+            </td>
           </tr>
         """
+        
+    if len(cars_found) > 20:
+        html_content += f"<tr><td colspan='3' style='padding:10px; text-align:center;'>... y {len(cars_found)-20} más ...</td></tr>"
 
-    html_content += "</table></body></html>"
+    html_content += """
+        </table>
+        <p style='color:red; font-weight:bold;'>RECUERDA: Cambia DIAS_ATRAS = 1 en el script para uso diario.</p>
+      </body>
+    </html>
+    """
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -112,24 +121,22 @@ def send_email_report(cars_found):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("✅ Email enviado correctamente.")
+        print("📧 CORREO DE PRUEBA ENVIADO CORRECTAMENTE.")
     except Exception as e:
         print(f"❌ Error enviando email: {e}")
 
 def main():
-    # Este print te confirmará si el código es el nuevo
-    print("🚀 INICIANDO RASTREO (VERSIÓN TUBERÍA | )...")
+    print(f"🚀 INICIANDO MODO PRUEBA (Mirando {DIAS_ATRAS} días atrás)...")
     print(f"📂 Zonas cargadas: {len(URLS_BUSQUEDA)}")
-
-    if len(URLS_BUSQUEDA) == 1 and "|" in RAW_URLS:
-         print("⚠️ Error crítico: El código no está separando bien las URLs.")
 
     all_found_cars = []
     seen_ids = set()
-    yesterday = datetime.now() - timedelta(days=1)
+    
+    # AQUÍ ESTÁ LA CLAVE DEL CAMBIO DE FECHA
+    cutoff_date = datetime.now() - timedelta(days=DIAS_ATRAS)
 
     for i, url in enumerate(URLS_BUSQUEDA):
-        print(f"--- Procesando zona {i+1}/{len(URLS_BUSQUEDA)} ---")
+        print(f"--- Analizando zona {i+1}/{len(URLS_BUSQUEDA)} ---")
         items = get_wallapop_listings(url)
         
         count_zone = 0
@@ -139,7 +146,7 @@ def main():
             seen_ids.add(item_id)
 
             ts = item.get('creationDate')
-            if ts and datetime.fromtimestamp(ts / 1000) > yesterday:
+            if ts and datetime.fromtimestamp(ts / 1000) > cutoff_date:
                 price = item.get('price', 0)
                 if isinstance(price, dict): price = price.get('amount', 0)
                 
@@ -150,13 +157,14 @@ def main():
                 })
                 count_zone += 1
         
-        print(f"   ✅ Nuevos en esta zona: {count_zone}")
+        print(f"   ✅ Encontrados: {count_zone}")
 
-    print(f"🏁 Total encontrados: {len(all_found_cars)}")
+    print(f"🏁 Total global: {len(all_found_cars)}")
+    
     if all_found_cars:
         send_email_report(all_found_cars)
     else:
-        print("📭 No hay novedades hoy.")
+        print("📭 Increíble, pero no hay nada ni siquiera en 30 días. Revisa los filtros de la URL.")
 
 if __name__ == "__main__":
     main()
